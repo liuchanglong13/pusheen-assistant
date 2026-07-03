@@ -40,6 +40,7 @@ public class FloatingWindowService extends Service {
     private TextView tvStatus;
     private LinearLayout layoutResults;
     private ExecutorService executor;
+    private Handler mainHandler;
 
     // 单例引用，用于从无障碍服务触发生成
     private static FloatingWindowService instance;
@@ -49,6 +50,7 @@ public class FloatingWindowService extends Service {
         super.onCreate();
         instance = this;
         executor = Executors.newSingleThreadExecutor();
+        mainHandler = new Handler(Looper.getMainLooper());
 
         // Android 8+ 需要前台通知
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -183,14 +185,14 @@ public class FloatingWindowService extends Service {
      * 生成话术（调用 DeepSeek API）
      */
     private void generateReplies(String userMessage) {
-        runOnUiThread(() -> {
+        mainHandler.post(() -> {
             tvStatus.setText("⏳ 正在生成话术...");
             layoutResults.removeAllViews();
         });
 
         String apiKey = ConfigManager.getApiKey(this);
         if (apiKey == null || apiKey.isEmpty()) {
-            runOnUiThread(() -> {
+            mainHandler.post(() -> {
                 tvStatus.setText("❌ 请先配置 API Key");
             });
             return;
@@ -248,11 +250,11 @@ public class FloatingWindowService extends Service {
                         .getString("content");
 
                 // 显示结果
-                runOnUiThread(() -> displayResults(content));
+                mainHandler.post(() -> displayResults(content));
 
             } catch (Exception e) {
                 Log.e(TAG, "API 调用失败", e);
-                runOnUiThread(() -> {
+                mainHandler.post(() -> {
                     tvStatus.setText("❌ 生成失败: " + e.getMessage());
                 });
             }
