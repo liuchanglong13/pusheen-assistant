@@ -22,19 +22,32 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Accept Android SDK licenses
+      - name: Accept licenses
         run: yes | sdkmanager --licenses || true
 
-      - name: Create local.properties
-        run: echo "sdk.dir=$ANDROID_HOME" > local.properties
-
-      - name: Build debug APK (direct gradle)
+      - name: Install Gradle & generate wrapper
         run: |
-          cd app
-          gradle assembleDebug --no-daemon || ./gradlew assembleDebug --no-daemon
+          # Download Gradle
+          curl -sL "https://services.gradle.org/distributions/gradle-8.2-bin.zip" -o /tmp/gradle.zip
+          unzip -q /tmp/gradle.zip -d /opt
+          export PATH="/opt/gradle-8.2/bin:$PATH"
+          
+          # Generate gradle wrapper in project
+          cd $GITHUB_WORKSPACE
+          gradle wrapper --gradle-version 8.2 --distribution-type all
+          
+          # Make executable
+          chmod +x gradlew
+
+      - name: Build debug APK
+        run: |
+          export ANDROID_HOME=$ANDROID_SDK_ROOT
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
+        if: success()
         with:
           name: pusheen-assistant-apk
           path: app/build/outputs/apk/debug/*.apk
