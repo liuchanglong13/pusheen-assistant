@@ -1,0 +1,4 @@
+// 根目录 build.gradle — 仅配置构建脚本仓库
+plugins {
+    id 'com.android.application' version '8.2.2' apply false
+}

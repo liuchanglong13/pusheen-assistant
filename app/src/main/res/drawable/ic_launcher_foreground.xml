@@ -1,0 +1,14 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 圆形背景 -->
+    <path
+        android:fillColor="#FF1A73E8"
+        android:pathData="M54,0C83.82,0 108,24.18 108,54C108,83.82 83.82,108 54,108C24.18,108 0,83.82 0,54C0,24.18 24.18,0 54,0Z" />
+    <!-- 大脑图标（简化） -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M54,20C45,20 40,25 40,35C40,45 35,50 35,55C35,60 40,65 45,70C50,75 54,80 54,85C54,80 58,75 63,70C68,65 73,60 73,55C73,50 68,45 68,35C68,25 63,20 54,20ZM54,30C57,30 60,33 60,36C60,39 57,42 54,42C51,42 48,39 48,36C48,33 51,30 54,30ZM54,75C51,75 48,72 48,69C48,66 51,63 54,63C57,63 60,66 60,69C60,72 57,75 54,75Z" />
+</vector>

@@ -1,0 +1,53 @@
+# Android
+*.iml
+.gradle
+/local.properties
+/.idea
+.DS_Store
+*.swp
+*.swo
+*~
+/captures
+
+# Gradle
+gradle-wrapper.jar
+
+# Built application files
+*.apk
+*.ap_
+
+# Files for the ART/Dalvik VM
+*.dex
+
+# Java class files
+*.class
+
+# Generated files
+bin/
+gen/
+out/
+
+# Gradle files
+build/
+
+# Local configuration file
+local.properties
+
+# Proguard folder
+proguard/
+
+# Signing files
+*.jks
+*.keystore
+
+# Android Studio
+.idea/
+build/
+gradlew
+gradlew.bat
+
+# External native build folder
+.externalNativeBuild
+
+# NDK
+obj/
