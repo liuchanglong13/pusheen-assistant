@@ -200,7 +200,7 @@ public class FloatingWindowService extends Service {
                         }
                         return true;
 
-                    case MotionEvent.UP:
+                    case MotionEvent.ACTION_UP:
                         // 如果没拖动过，算点击（不做任何事就行）
                         return isDragging;
                 }
