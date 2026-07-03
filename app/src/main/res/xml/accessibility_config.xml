@@ -4,6 +4,6 @@
     android:accessibilityFeedbackType="feedbackGeneric"
     android:accessibilityFlags="flagDefault|flagReportViewIds"
     android:canRetrieveWindowContent="true"
-    android:description="普微助手需要此权限来监听微信聊天消息并生成智能话术"
+    android:description="@string/accessibility_description"
     android:notificationTimeout="100"
     android:packageNames="com.tencent.mm,com.tencent.wework" />
