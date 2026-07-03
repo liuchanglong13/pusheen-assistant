@@ -12,6 +12,7 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.*;
 import android.widget.*;
@@ -27,22 +28,37 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * 悬浮窗服务
- * 在微信界面上方显示话术结果
+ * 悬浮窗服务 - 右侧窄条悬浮，不遮挡输入框
  */
 public class FloatingWindowService extends Service {
 
     private static final String TAG = "FloatingWindow";
     private static final String API_URL = "https://api.deepseek.com/v1/chat/completions";
 
+    // 窗口尺寸
+    private static final int WINDOW_WIDTH_DP = 320;
+    private static final int WINDOW_MAX_HEIGHT_DP = 500;
+
     private WindowManager windowManager;
     private View floatingView;
+    private View panelMain;       // 主面板（展开）
+    private View btnExpand;       // 收起按钮
     private TextView tvStatus;
+    private TextView tvEmpty;
     private LinearLayout layoutResults;
+
     private ExecutorService executor;
     private Handler mainHandler;
 
-    // 单例引用，用于从无障碍服务触发生成
+    // 拖动相关
+    private float initialTouchX, initialTouchY;
+    private int initialX, initialY;
+    private boolean isDragging = false;
+
+    // 展开状态
+    private boolean isExpanded = true;
+
+    // 单例引用
     private static FloatingWindowService instance;
 
     @Override
@@ -52,7 +68,7 @@ public class FloatingWindowService extends Service {
         executor = Executors.newSingleThreadExecutor();
         mainHandler = new Handler(Looper.getMainLooper());
 
-        // Android 8+ 需要前台通知
+        // Android 8+ 前台通知
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             String channelId = "pusheen_foreground";
             NotificationChannel channel = new NotificationChannel(
@@ -84,13 +100,12 @@ public class FloatingWindowService extends Service {
     }
 
     /**
-     * 从无障碍服务触发话术生成（静态方法）
+     * 从无障碍服务触发话术生成
      */
     public static void triggerGenerate(android.content.Context context, String message) {
         if (instance != null) {
             instance.generateReplies(message);
         } else {
-            // 服务未启动，先启动服务
             Intent intent = new Intent(context, FloatingWindowService.class);
             intent.setAction("generate");
             intent.putExtra("message", message);
@@ -103,72 +118,91 @@ public class FloatingWindowService extends Service {
     }
 
     /**
-     * 创建悬浮窗
+     * 创建悬浮窗 - 右侧悬浮，不挡输入框
      */
     private void createFloatingWindow() {
         windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
 
+        // 获取屏幕信息，dp转px
+        DisplayMetrics metrics = new DisplayMetrics();
+        windowManager.getDefaultDisplay().getMetrics(metrics);
+        float density = metrics.density;
+        int windowWidthPx = (int) (WINDOW_WIDTH_DP * density);
+        int windowHeightPx = (int) (WINDOW_MAX_HEIGHT_DP * density);
+
         // 悬浮窗布局
         floatingView = LayoutInflater.from(this).inflate(R.layout.floating_window, null);
 
-        // 窗口参数
+        // 绑定视图
+        panelMain = floatingView.findViewById(R.id.panel_main);
+        btnExpand = floatingView.findViewById(R.id.btn_expand);
+        tvStatus = floatingView.findViewById(R.id.tv_status);
+        tvEmpty = floatingView.findViewById(R.id.tv_empty);
+        layoutResults = floatingView.findViewById(R.id.layout_results);
+        ImageButton btnClose = floatingView.findViewById(R.id.btn_close);
+        ImageButton btnCollapse = floatingView.findViewById(R.id.btn_collapse);
+        View dragBar = floatingView.findViewById(R.id.drag_bar);
+
+        // ===== 窗口参数 =====
         WindowManager.LayoutParams params;
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             params = new WindowManager.LayoutParams(
-                    WindowManager.LayoutParams.MATCH_PARENT,
-                    WindowManager.LayoutParams.WRAP_CONTENT,
+                    windowWidthPx,
+                    windowHeightPx,
                     WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                            | WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
                     PixelFormat.TRANSLUCENT);
         } else {
             params = new WindowManager.LayoutParams(
-                    WindowManager.LayoutParams.MATCH_PARENT,
-                    WindowManager.LayoutParams.WRAP_CONTENT,
+                    windowWidthPx,
+                    windowHeightPx,
                     WindowManager.LayoutParams.TYPE_PHONE,
-                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                            | WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
                     PixelFormat.TRANSLUCENT);
         }
 
-        // 初始位置：底部
-        params.gravity = Gravity.BOTTOM;
+        // 关键：右侧悬浮，不挡底部输入框
+        params.gravity = Gravity.RIGHT | Gravity.TOP;
+        params.x = 10;   // 距右边缘间距(dp会根据密度自动换算)
+        params.y = 120;  // 距顶部距离
 
-        // 绑定视图
-        tvStatus = floatingView.findViewById(R.id.tv_status);
-        layoutResults = floatingView.findViewById(R.id.layout_results);
-        ImageButton btnClose = floatingView.findViewById(R.id.btn_close);
-        ImageButton btnSettings = floatingView.findViewById(R.id.btn_settings);
-
+        // ===== 关闭按钮 =====
         btnClose.setOnClickListener(v -> hideFloatingWindow());
-        btnSettings.setOnClickListener(v -> {
-            Intent intent = new Intent(this, MainActivity.class);
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            startActivity(intent);
-        });
 
-        // 拖动条
-        View dragBar = floatingView.findViewById(R.id.drag_bar);
+        // ===== 收起/展开切换 =====
+        btnCollapse.setOnClickListener(v -> collapse());
+        btnExpand.setOnClickListener(v -> expand());
+
+        // ===== 整个标题栏可拖动 =====
         dragBar.setOnTouchListener(new View.OnTouchListener() {
-            private int initialX;
-            private int initialY;
-            private float initialTouchX;
-            private float initialTouchY;
-
             @Override
             public boolean onTouch(View v, MotionEvent event) {
                 switch (event.getAction()) {
                     case MotionEvent.ACTION_DOWN:
+                        isDragging = false;
                         initialX = params.x;
                         initialY = params.y;
                         initialTouchX = event.getRawX();
                         initialTouchY = event.getRawY();
                         return true;
+
                     case MotionEvent.ACTION_MOVE:
-                        params.x = initialX + (int) (event.getRawX() - initialTouchX);
-                        params.y = initialY + (int) (event.getRawY() - initialTouchY);
-                        windowManager.updateViewLayout(floatingView, params);
+                        float dx = event.getRawX() - initialTouchX;
+                        float dy = event.getRawY() - initialTouchY;
+                        // 超过阈值才算拖动（区分点击和拖动）
+                        if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
+                            isDragging = true;
+                            params.x = initialX + (int) dx;
+                            params.y = initialY + (int) dy;
+                            // 边界限制：不拖出屏幕
+                            params.y = Math.max(0, Math.min(params.y, metrics.heightPixels - 200));
+                            windowManager.updateViewLayout(floatingView, params);
+                        }
                         return true;
+
+                    case MotionEvent.UP:
+                        // 如果没拖动过，算点击（不做任何事就行）
+                        return isDragging;
                 }
                 return false;
             }
@@ -181,19 +215,71 @@ public class FloatingWindowService extends Service {
         }
     }
 
+    /** 收起到小按钮 */
+    private void collapse() {
+        isExpanded = false;
+        panelMain.setVisibility(View.GONE);
+        btnExpand.setVisibility(View.VISIBLE);
+        // 收起时缩小窗口到按钮大小
+        WindowManager.LayoutParams params = (WindowManager.LayoutParams) floatingView.getLayoutParams();
+        DisplayMetrics metrics = new DisplayMetrics();
+        windowManager.getDefaultDisplay().getMetrics(metrics);
+        params.width = (int) (48 * metrics.density);
+        params.height = (int) (48 * metrics.density);
+        windowManager.updateViewLayout(floatingView, params);
+    }
+
+    /** 从按钮展开 */
+    private void expand() {
+        isExpanded = true;
+        btnExpand.setVisibility(View.GONE);
+        panelMain.setVisibility(View.VISIBLE);
+        // 恢复正常尺寸
+        WindowManager.LayoutParams params = (WindowManager.LayoutParams) floatingView.getLayoutParams();
+        DisplayMetrics metrics = new DisplayMetrics();
+        windowManager.getDefaultDisplay().getMetrics(metrics);
+        params.width = (int) (WINDOW_WIDTH_DP * metrics.density);
+        params.height = (int) (WINDOW_MAX_HEIGHT_DP * metrics.density);
+        windowManager.updateViewLayout(floatingView, params);
+    }
+
     /**
      * 生成话术（调用 DeepSeek API）
      */
     private void generateReplies(String userMessage) {
+        // 确保展开状态
+        if (!isExpanded) {
+            expand();
+        }
+
         mainHandler.post(() -> {
-            tvStatus.setText("⏳ 正在生成话术...");
+            tvStatus.setText("⏳ 生成中...");
+            tvEmpty.setVisibility(View.GONE);
+            layoutResults.setVisibility(View.VISIBLE);
             layoutResults.removeAllViews();
+
+            // 加载占位提示
+            TextView loading = new TextView(FloatingWindowService.this);
+            loading.setText("正在分析消息，生成话术...");
+            loading.setPadding(16, 20, 16, 20);
+            loading.setGravity(android.view.Gravity.CENTER);
+            loading.setTextColor(0xFF999999);
+            loading.setTextSize(13);
+            layoutResults.addView(loading);
         });
 
         String apiKey = ConfigManager.getApiKey(this);
         if (apiKey == null || apiKey.isEmpty()) {
             mainHandler.post(() -> {
-                tvStatus.setText("❌ 请先配置 API Key");
+                tvStatus.setText("❌ 未配置Key");
+                layoutResults.removeAllViews();
+                TextView err = new TextView(FloatingWindowService.this);
+                err.setText("请先在设置中配置API Key");
+                err.setPadding(16, 20, 16, 20);
+                err.setGravity(android.view.Gravity.CENTER);
+                err.setTextColor(0xFFFF4444);
+                err.setTextSize(13);
+                layoutResults.addView(err);
             });
             return;
         }
@@ -211,7 +297,6 @@ public class FloatingWindowService extends Service {
                 conn.setConnectTimeout(30000);
                 conn.setReadTimeout(30000);
 
-                // 构建请求体
                 JSONObject requestBody = new JSONObject();
                 requestBody.put("model", ConfigManager.getModel(this));
                 JSONArray messages = new JSONArray();
@@ -227,12 +312,10 @@ public class FloatingWindowService extends Service {
                 requestBody.put("temperature", 0.8);
                 requestBody.put("max_tokens", 800);
 
-                // 发送请求
                 OutputStream os = conn.getOutputStream();
                 os.write(requestBody.toString().getBytes("UTF-8"));
                 os.close();
 
-                // 读取响应
                 BufferedReader br = new BufferedReader(
                         new java.io.InputStreamReader(conn.getInputStream(), "UTF-8"));
                 StringBuilder response = new StringBuilder();
@@ -249,54 +332,85 @@ public class FloatingWindowService extends Service {
                         .getJSONObject("message")
                         .getString("content");
 
-                // 显示结果
                 mainHandler.post(() -> displayResults(content));
 
             } catch (Exception e) {
-                Log.e(TAG, "API 调用失败", e);
+                Log.e(TAG, "API调用失败", e);
                 mainHandler.post(() -> {
-                    tvStatus.setText("❌ 生成失败: " + e.getMessage());
+                    tvStatus.setText("❌ 生成失败");
+                    layoutResults.removeAllViews();
+                    TextView err = new TextView(FloatingWindowService.this);
+                    err.setText("网络错误：" + e.getMessage());
+                    err.setPadding(16, 12, 16, 12);
+                    err.setTextColor(0xFFFF4444);
+                    err.setTextSize(12);
+                    layoutResults.addView(err);
                 });
             }
         });
     }
 
     /**
-     * 显示生成的话术结果
+     * 显示话术结果
      */
     private void displayResults(String content) {
-        tvStatus.setText("✅ 话术已生成");
+        tvStatus.setText("✅ 已生成（点卡片复制）");
         layoutResults.removeAllViews();
 
-        // 按行分割，每行作为一条话术
         String[] lines = content.split("\n");
         for (String line : lines) {
             line = line.trim();
             if (line.isEmpty()) continue;
 
-            // 清理序号前缀（如 "1.", "1、", "1 "）
-            String cleanLine = line.replaceAll("^\\d+[\\.\\、\\s]+", "").trim();
+            // 清理序号前缀
+            String cleanLine = line.replaceAll("^\\d+[\\.\\、\\s:：]+", "").trim();
             if (cleanLine.isEmpty()) continue;
 
-            // 创建话术卡片
+            // 创建可复制的话术卡片
             TextView tv = new TextView(this);
             tv.setText(cleanLine);
-            tv.setPadding(24, 16, 24, 16);
+            tv.setPadding(20, 14, 20, 14);
             tv.setBackgroundResource(R.drawable.bg_reply_card);
-            tv.setTextColor(0xFF333333);
-            tv.setTextSize(14);
+            tv.setTextColor(0xFF222222);
+            tv.setTextSize(14f);
             tv.setMaxLines(4);
             tv.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            tv.setLineSpacing(4f, 1f);
 
             // 点击复制
             tv.setOnClickListener(v -> {
                 ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
                 ClipData clip = ClipData.newPlainText("话术", cleanLine);
                 clipboard.setPrimaryClip(clip);
-                Toast.makeText(FloatingWindowService.this, "已复制", Toast.LENGTH_SHORT).show();
+                Toast.makeText(FloatingWindowService.this, "已复制 ✅", Toast.LENGTH_SHORT).show();
+                // 复制后给个视觉反馈
+                tv.setBackgroundColor(0xFFD4EDDA);
+                mainHandler.postDelayed(() -> tv.setBackgroundResource(R.drawable.bg_reply_card), 300);
+            });
+
+            // 长按显示完整内容
+            tv.setOnLongClickListener(v -> {
+                // 用对话框显示完整话术
+                new android.app.AlertDialog.Builder(FloatingWindowService.this)
+                        .setTitle("完整话术")
+                        .setMessage(cleanLine)
+                        .setPositiveButton("复制", (d, w) -> {
+                            ClipboardManager cb = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                            cb.setPrimaryClip(ClipData.newPlainText("话术", cleanLine));
+                            Toast.makeText(FloatingWindowService.this, "已复制", Toast.LENGTH_SHORT).show();
+                        })
+                        .setNegativeButton("关闭", null)
+                        .show();
+                return true;
             });
 
             layoutResults.addView(tv);
+
+            // 卡片之间加间距
+            View spacer = new View(this);
+            spacer.setLayoutParams(new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, 6));
+            layoutResults.addView(spacer);
         }
     }
 
@@ -305,6 +419,7 @@ public class FloatingWindowService extends Service {
             windowManager.removeView(floatingView);
             floatingView = null;
         }
+        stopSelf();
     }
 
     @Override
